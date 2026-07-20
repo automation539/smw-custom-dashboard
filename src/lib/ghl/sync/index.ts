@@ -68,3 +68,43 @@ export async function runGhlSync(clientId: string, syncType: GhlSyncType): Promi
     throw error;
   }
 }
+
+// Fixed order required for a full sync pass: users and pipelines populate
+// lookups (assigned-user names, pipeline/stage names) that contacts,
+// opportunities, and messages sync display alongside.
+export const FULL_SYNC_ORDER: GhlSyncType[] = [
+  "users",
+  "pipelines",
+  "contacts",
+  "opportunities",
+  "messages",
+];
+
+export interface GhlSyncStepResult {
+  syncType: GhlSyncType;
+  success: boolean;
+  error?: string;
+}
+
+// Shared by the cron endpoint and the "sync automatically after connecting"
+// flow -- runs every step in FULL_SYNC_ORDER for one tenant. A failure in one
+// step is recorded (runGhlSync already persists it to ghl_sync_logs) and does
+// not stop the remaining steps.
+export async function runGhlSyncSequence(clientId: string): Promise<GhlSyncStepResult[]> {
+  const results: GhlSyncStepResult[] = [];
+
+  for (const syncType of FULL_SYNC_ORDER) {
+    try {
+      await runGhlSync(clientId, syncType);
+      results.push({ syncType, success: true });
+    } catch (error) {
+      results.push({
+        syncType,
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown sync error",
+      });
+    }
+  }
+
+  return results;
+}

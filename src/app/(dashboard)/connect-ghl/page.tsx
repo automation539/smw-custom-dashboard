@@ -10,6 +10,11 @@ import {
   triggerGhlPipelinesSync,
 } from "@/lib/actions/ghl-sync";
 
+// Server Actions invoked from this page (saveGhlConnection, retryInitialGhlSync)
+// schedule a background sync via `after()` that can take several minutes --
+// match the same execution window granted to the cron endpoint.
+export const maxDuration = 300;
+
 const SYNC_LOG_COLUMNS = "status, started_at, finished_at, records_synced, error_message";
 
 export default async function ConnectGhlPage() {

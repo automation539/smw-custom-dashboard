@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { runGhlSync, type GhlSyncType } from "@/lib/ghl/sync";
+import { runGhlSyncSequence, type GhlSyncType } from "@/lib/ghl/sync";
 
 // Vercel Cron Jobs invoke this via GET. Long-running: several tenants, each
 // running 5 sequential syncs that can individually take minutes (messages
 // sync in particular). Request the longest execution window available.
 export const maxDuration = 300;
-
-// Required order per this milestone -- deliberately NOT the "full" sync
-// type's own internal order, so this file controls sequencing explicitly
-// while still reusing runGhlSync for every actual sync (no duplicated logic).
-const SYNC_ORDER: GhlSyncType[] = ["users", "pipelines", "contacts", "opportunities", "messages"];
 
 // Minimal courtesy delay between tenants -- each tenant syncs against its
 // own GHL location/token, so this isn't working around a shared rate limit,
@@ -58,21 +53,12 @@ export async function GET(request: NextRequest) {
   const results: SyncOutcome[] = [];
 
   for (const connection of connections ?? []) {
-    for (const syncType of SYNC_ORDER) {
-      try {
-        await runGhlSync(connection.client_id, syncType);
-        results.push({ clientId: connection.client_id, syncType, success: true });
-      } catch (error) {
-        // A single tenant/sync-type failure must never stop the rest of
-        // this tenant's syncs or any other tenant's. runGhlSync has already
-        // recorded the failure in ghl_sync_logs -- just keep going.
-        results.push({
-          clientId: connection.client_id,
-          syncType,
-          success: false,
-          error: error instanceof Error ? error.message : "Unknown sync error",
-        });
-      }
+    // A single tenant's total failure must never stop any other tenant's
+    // syncs -- runGhlSyncSequence already isolates per-step failures within
+    // one tenant and has recorded each outcome in ghl_sync_logs.
+    const stepResults = await runGhlSyncSequence(connection.client_id);
+    for (const step of stepResults) {
+      results.push({ clientId: connection.client_id, ...step });
     }
 
     await sleep(DELAY_BETWEEN_TENANTS_MS);
